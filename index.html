@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChemTrack — 운송 무게 확인</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+  --h:#1e40af;
+  --h-lt:#dbeafe;
+  --h-dk:#1e3a8a;
+  --ok:#065f46;
+  --ok-bg:#d1fae5;
+  --mm:#991b1b;
+  --mm-bg:#fee2e2;
+  --pnd:#374151;
+  --pnd-bg:#f3f4f6;
+  --bd:#d1d5db;
+  --bd2:#e5e7eb;
+  --txt:#111827;
+  --txt2:#6b7280;
+  --bg:#ffffff;
+  --bg2:#f9fafb;
+  --bg3:#f3f4f6;
+  --row-h:36px;
+  --hdr-h:36px;
+}
+
+html,body{height:100%;overflow:hidden;background:#fff;color:var(--txt);font-family:'Pretendard','Apple SD Gothic Neo',system-ui,sans-serif;font-size:13px}
+
+/* ─ TOPBAR ─ */
+#topbar{
+  height:48px;display:flex;align-items:center;gap:12px;
+  padding:0 16px;background:#fff;border-bottom:2px solid var(--h);
+  flex-shrink:0;
+}
+.logo{font-size:16px;font-weight:800;color:var(--h);letter-spacing:-0.5px;margin-right:8px}
+.tb-btn{
+  height:30px;padding:0 14px;border-radius:5px;font-size:12.5px;font-weight:600;
+  cursor:pointer;border:1.5px solid;transition:.12s;
+}
+.tb-btn.primary{background:var(--h);color:#fff;border-color:var(--h)}
+.tb-btn.primary:hover{background:var(--h-dk)}
+.tb-btn.ghost{background:#fff;color:var(--txt2);border-color:var(--bd)}
+.tb-btn.ghost:hover{background:var(--bg3);color:var(--txt)}
+#search-box{
+  height:30px;border:1.5px solid var(--bd);border-radius:5px;
+  padding:0 10px;font-size:12.5px;outline:none;width:200px;
+}
+#search-box:focus{border-color:var(--h);box-shadow:0 0 0 3px #dbeafe}
+#conn-dot{width:9px;height:9px;border-radius:50%;border:2px solid #d97706;background:#fef3c7;margin-left:auto;flex-shrink:0}
+#conn-dot.ok{background:#d1fae5;border-color:#059669}
+#conn-dot.err{background:#fee2e2;border-color:#dc2626}
+#record-label{font-size:12px;color:var(--txt2);white-space:nowrap}
+
+/* ─ LAYOUT ─ */
+#app{display:flex;flex-direction:column;height:100vh}
+#sheet-wrap{flex:1;overflow:auto;position:relative}
+
+/* ─ SHEET TABLE ─ */
+#sheet{
+  border-collapse:separate;border-spacing:0;
+  min-width:max-content;width:100%;
+  font-size:12.5px;
+}
+
+/* sticky header row */
+#sheet thead th{
+  position:sticky;top:0;z-index:10;
+  background:var(--h);color:#fff;
+  font-weight:600;font-size:11.5px;
+  height:var(--hdr-h);padding:0 8px;
+  border-right:1px solid rgba(255,255,255,.2);
+  border-bottom:2px solid var(--h-dk);
+  white-space:nowrap;user-select:none;
+  text-align:center;vertical-align:middle;
+}
+#sheet thead th.left{text-align:left}
+
+/* row number column sticky */
+#sheet th.rn,#sheet td.rn{
+  position:sticky;left:0;z-index:8;
+  background:#f1f5f9;
+  border-right:2px solid var(--bd);
+  width:42px;min-width:42px;max-width:42px;
+  text-align:center;color:var(--txt2);font-weight:500;
+  font-size:11px;
+}
+#sheet thead th.rn{
+  z-index:20;background:var(--h-dk);color:#93c5fd;
+  border-right:2px solid rgba(255,255,255,.3);
+}
+
+/* data rows */
+#sheet tbody tr{height:var(--row-h);transition:background .08s}
+#sheet tbody tr:nth-child(even){background:var(--bg2)}
+#sheet tbody tr:hover{background:#eff6ff}
+#sheet tbody tr.selected{background:#dbeafe!important}
+
+#sheet tbody td{
+  padding:0;border-right:1px solid var(--bd2);
+  border-bottom:1px solid var(--bd2);
+  vertical-align:middle;
+  white-space:nowrap;
+}
+
+/* ─ CELL TYPES ─ */
+td.cell-date input,
+td.cell-text input,
+td.cell-num input{
+  width:100%;height:100%;padding:0 8px;
+  border:none;background:transparent;
+  font-size:12.5px;font-family:inherit;color:var(--txt);
+  outline:none;
+}
+td.cell-date input{min-width:110px}
+td.cell-text input{min-width:90px}
+td.cell-num input{min-width:90px;text-align:right;font-variant-numeric:tabular-nums}
+
+td.cell-date:focus-within,
+td.cell-text:focus-within,
+td.cell-num:focus-within{
+  outline:2px solid var(--h);outline-offset:-2px;
+  background:#eff6ff!important;
+}
+
+/* computed cells (auto) */
+td.cell-auto{
+  text-align:right;padding:0 8px;
+  color:var(--txt2);font-variant-numeric:tabular-nums;
+  background:var(--bg3)!important;
+  font-size:12px;
+}
+td.cell-auto.active-row{color:var(--txt)}
+
+/* check badge cell */
+td.cell-check{text-align:center;padding:0 6px}
+.badge{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;
+}
+.badge.ok{background:var(--ok-bg);color:var(--ok)}
+.badge.mm{background:var(--mm-bg);color:var(--mm)}
+.badge.pnd{background:var(--pnd-bg);color:var(--pnd)}
+
+/* action cell */
+td.cell-act{text-align:center;padding:0 4px;min-width:60px}
+.del-btn{
+  width:24px;height:24px;border:1px solid var(--bd);border-radius:4px;
+  background:#fff;cursor:pointer;font-size:13px;
+  display:inline-flex;align-items:center;justify-content:center;
+  transition:.1s;color:var(--txt2);
+}
+.del-btn:hover{background:var(--mm-bg);border-color:#fca5a5;color:var(--mm)}
+
+/* ADD ROW — sticky bottom */
+#add-row td{
+  background:#fff;border-top:2px solid var(--h);
+  position:sticky;bottom:0;z-index:9;
+}
+#add-row td.rn{z-index:11;background:#eff6ff;border-top:2px solid var(--h)}
+
+/* ─ FOOTER SUMMARY ─ */
+#footer{
+  height:34px;display:flex;align-items:center;gap:20px;
+  padding:0 16px;background:var(--h);color:#fff;font-size:12px;
+  flex-shrink:0;
+}
+.fstat{display:flex;align-items:center;gap:6px}
+.fstat strong{font-weight:700}
+.fstat .dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.dot-ok{background:#6ee7b7}
+.dot-mm{background:#fca5a5}
+.dot-pnd{background:#93c5fd}
+
+/* ─ TOAST ─ */
+.toast{
+  position:fixed;bottom:50px;left:50%;transform:translateX(-50%);
+  background:#1f2937;color:#fff;padding:9px 20px;border-radius:8px;
+  font-size:13px;font-weight:500;z-index:999;pointer-events:none;
+  animation:fadeIn .2s ease;
+}
+.toast.ok{background:#065f46}
+.toast.err{background:#991b1b}
+@keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+
+/* ─ MODAL ─ */
+#modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:500;display:flex;align-items:center;justify-content:center}
+#modal-bg.hidden{display:none}
+.modal{background:#fff;border-radius:12px;padding:28px 32px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal p{font-size:15px;font-weight:500;margin-bottom:20px;color:var(--txt)}
+.modal-btns{display:flex;gap:10px;justify-content:center}
+
+/* col widths */
+.w-date{min-width:116px;width:116px}
+.w-chem{min-width:100px;width:100px}
+.w-iso {min-width:90px;width:90px}
+.w-cust{min-width:100px;width:100px}
+.w-num {min-width:100px;width:100px}
+.w-auto{min-width:110px;width:110px}
+.w-chk {min-width:90px;width:90px}
+.w-act {min-width:60px;width:60px}
+</style>
+
+<!-- Firebase SDK -->
+<script type="module">
+import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import{getFirestore,collection,addDoc,doc,updateDoc,deleteDoc,onSnapshot,query,orderBy}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ── Firebase 설정 교체 ──────────────────────────────────
+const cfg={
+  apiKey:"AIzaSyBYoZ30Mr2LXZSNjHxFLtPQnyyI2dVajw8",
+  authDomain:"chemtrack-c89f7.firebaseapp.com",
+  projectId:"chemtrack-c89f7",
+  storageBucket:"chemtrack-c89f7.firebasestorage.app",
+  messagingSenderId:"261906336759",
+  appId:"1:261906336759:web:9696cd5436775726bb3cf2",
+  measurementId:"G-CTKBPYFM0D"
+};
+// ────────────────────────────────────────────────────────
+
+const app=initializeApp(cfg);
+const db=getFirestore(app);
+window._db=db;
+window._fs={collection,addDoc,doc,updateDoc,deleteDoc,onSnapshot,query,orderBy};
+window.dispatchEvent(new Event("fb-ready"));
+</script>
+</head>
+<body>
+<div id="app">
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <span class="logo">⚗ ChemTrack</span>
+  <button class="tb-btn primary" id="btn-add">+ 행 추가</button>
+  <button class="tb-btn ghost" id="btn-export">CSV 내보내기</button>
+  <input type="search" id="search-box" placeholder="검색 (Chemical / Customer / ISO Tank)">
+  <span id="record-label">0 건</span>
+  <div id="conn-dot" title="연결 확인 중"></div>
+</div>
+
+<!-- SHEET -->
+<div id="sheet-wrap">
+<table id="sheet">
+<thead>
+<tr>
+  <th class="rn">#</th>
+  <th class="left w-date">운송 날짜</th>
+  <th class="w-chem">Chemical</th>
+  <th class="w-iso">ISO Tank</th>
+  <th class="w-cust">Customer</th>
+  <th class="w-num">Scale In (lb)</th>
+  <th class="w-num">Scale Out (lb)</th>
+  <th class="w-auto">입고수량 (lb)</th>
+  <th class="w-auto">입고수량 (kg)</th>
+  <th class="w-num">확인수량 (lb)</th>
+  <th class="w-auto">확인수량 (kg)</th>
+  <th class="w-chk">Check</th>
+  <th class="w-act">삭제</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+<!-- FOOTER -->
+<div id="footer">
+  <div class="fstat"><span class="dot dot-ok"></span><strong id="f-ok">0</strong> OK</div>
+  <div class="fstat"><span class="dot dot-mm"></span><strong id="f-mm">0</strong> 불일치</div>
+  <div class="fstat"><span class="dot dot-pnd"></span><strong id="f-pnd">0</strong> 미확인</div>
+  <div style="margin-left:auto;font-size:11.5px;opacity:.7">총 입고 (kg): <strong id="f-total-kg">0</strong></div>
+</div>
+
+</div><!-- /#app -->
+
+<!-- DELETE MODAL -->
+<div id="modal-bg" class="hidden">
+  <div class="modal">
+    <p>이 행을 삭제하시겠습니까?</p>
+    <div class="modal-btns">
+      <button class="tb-btn ghost" id="m-cancel">취소</button>
+      <button class="tb-btn primary" id="m-confirm" style="background:#dc2626;border-color:#dc2626">삭제</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const LB2KG = 0.45359237;
+let records = [];
+let pendingDeleteId = null;
+
+const tbody    = document.getElementById("tbody");
+const searchEl = document.getElementById("search-box");
+const connDot  = document.getElementById("conn-dot");
+const recLabel = document.getElementById("record-label");
+const modalBg  = document.getElementById("modal-bg");
+
+/* ── UTILS ──────────────────────────────────────────── */
+function n(v){return v==null||v===""?null:Number(v)}
+function fmt(v,dec=1){return v==null||isNaN(v)?"":Number(v).toLocaleString("ko-KR",{minimumFractionDigits:dec,maximumFractionDigits:dec})}
+function calcStatus(qtyLb,confLb){
+  if(confLb==null||confLb==="")return"pnd";
+  return Math.abs(Number(qtyLb)-Number(confLb))<0.05?"ok":"mm";
+}
+function badgeHtml(s){
+  if(s==="ok") return`<span class="badge ok">✅ OK</span>`;
+  if(s==="mm") return`<span class="badge mm">⚠️ 불일치</span>`;
+  return`<span class="badge pnd">— 미확인</span>`;
+}
+function toast(msg,type=""){
+  const t=document.createElement("div");
+  t.className="toast"+(type?" "+type:"");
+  t.textContent=msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(),2800);
+}
+
+/* ── RENDER ─────────────────────────────────────────── */
+function filtered(){
+  const q=searchEl.value.toLowerCase();
+  if(!q)return records;
+  return records.filter(r=>[r.chemical,r.customer,r.isotank].join(" ").toLowerCase().includes(q));
+}
+
+function render(){
+  const data=filtered();
+  recLabel.textContent=data.length+" 건";
+
+  tbody.innerHTML=data.map((r,i)=>{
+    const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
+    const qtyKg=qtyLb!=null?qtyLb*LB2KG:null;
+    const confKg=r.confLb!=null?r.confLb*LB2KG:null;
+    const status=calcStatus(qtyLb,r.confLb);
+    return`<tr data-id="${r.id}">
+      <td class="rn">${i+1}</td>
+      <td class="cell-date w-date"><input type="date" value="${r.date||""}" data-field="date" data-id="${r.id}"></td>
+      <td class="cell-text w-chem"><input type="text" value="${r.chemical||""}" placeholder="HF" data-field="chemical" data-id="${r.id}"></td>
+      <td class="cell-text w-iso"><input type="text" value="${r.isotank||""}" placeholder="Tank ID" data-field="isotank" data-id="${r.id}"></td>
+      <td class="cell-text w-cust"><input type="text" value="${r.customer||""}" placeholder="고객사" data-field="customer" data-id="${r.id}"></td>
+      <td class="cell-num w-num"><input type="number" value="${r.scaleIn??""}" placeholder="0" data-field="scaleIn" data-id="${r.id}" step="0.1" min="0"></td>
+      <td class="cell-num w-num"><input type="number" value="${r.scaleOut??""}" placeholder="0" data-field="scaleOut" data-id="${r.id}" step="0.1" min="0"></td>
+      <td class="cell-auto w-auto">${fmt(qtyLb)}</td>
+      <td class="cell-auto w-auto">${fmt(qtyKg)}</td>
+      <td class="cell-num w-num"><input type="number" value="${r.confLb??""}" placeholder="0" data-field="confLb" data-id="${r.id}" step="0.1" min="0"></td>
+      <td class="cell-auto w-auto">${fmt(confKg)}</td>
+      <td class="cell-check w-chk">${badgeHtml(status)}</td>
+      <td class="cell-act w-act"><button class="del-btn" data-id="${r.id}" title="삭제">🗑</button></td>
+    </tr>`;
+  }).join("");
+
+  updateFooter(data);
+}
+
+function updateFooter(data){
+  let ok=0,mm=0,pnd=0,totalKg=0;
+  data.forEach(r=>{
+    const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
+    const s=calcStatus(qtyLb,r.confLb);
+    if(s==="ok")ok++;else if(s==="mm")mm++;else pnd++;
+    if(qtyLb!=null)totalKg+=qtyLb*LB2KG;
+  });
+  document.getElementById("f-ok").textContent=ok;
+  document.getElementById("f-mm").textContent=mm;
+  document.getElementById("f-pnd").textContent=pnd;
+  document.getElementById("f-total-kg").textContent=fmt(totalKg,1);
+}
+
+/* ── INLINE EDIT → FIREBASE ─────────────────────────── */
+let saveTimer={};
+
+tbody.addEventListener("input",e=>{
+  const inp=e.target;
+  if(!inp.dataset.field)return;
+  const id=inp.dataset.id;
+  const field=inp.dataset.field;
+  const val=inp.value;
+
+  // update local record
+  const r=records.find(x=>x.id===id);
+  if(!r)return;
+  r[field]=val===""?null:(["scaleIn","scaleOut","confLb"].includes(field)?Number(val):val);
+
+  // re-render computed cells in same row
+  const tr=inp.closest("tr");
+  const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
+  const qtyKg=qtyLb!=null?qtyLb*LB2KG:null;
+  const confKg=r.confLb!=null?r.confLb*LB2KG:null;
+  const status=calcStatus(qtyLb,r.confLb);
+  const cells=tr.querySelectorAll("td.cell-auto");
+  cells[0].textContent=fmt(qtyLb);
+  cells[1].textContent=fmt(qtyKg);
+  cells[2].textContent=fmt(confKg);
+  tr.querySelector("td.cell-check").innerHTML=badgeHtml(status);
+  updateFooter(filtered());
+
+  // debounce save
+  clearTimeout(saveTimer[id]);
+  saveTimer[id]=setTimeout(()=>saveRecord(id),800);
+});
+
+async function saveRecord(id){
+  const r=records.find(x=>x.id===id);
+  if(!r||!window._db)return;
+  const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
+  try{
+    await window._fs.updateDoc(window._fs.doc(window._db,"transports",id),{
+      date:r.date||null,
+      chemical:r.chemical||null,
+      isotank:r.isotank||null,
+      customer:r.customer||null,
+      scaleIn:r.scaleIn??null,
+      scaleOut:r.scaleOut??null,
+      qtyLb:qtyLb,
+      qtyKg:qtyLb!=null?qtyLb*LB2KG:null,
+      confLb:r.confLb??null,
+      confKg:r.confLb!=null?r.confLb*LB2KG:null,
+      status:calcStatus(qtyLb,r.confLb),
+      updatedAt:new Date().toISOString()
+    });
+  }catch(e){toast("저장 실패: "+e.message,"err")}
+}
+
+/* ── ADD ROW ─────────────────────────────────────────── */
+document.getElementById("btn-add").addEventListener("click",async()=>{
+  if(!window._db){toast("Firebase 연결 필요","err");return}
+  const payload={
+    date:new Date().toISOString().slice(0,10),
+    chemical:"",isotank:"",customer:"",
+    scaleIn:null,scaleOut:null,qtyLb:null,qtyKg:null,
+    confLb:null,confKg:null,status:"pnd",
+    createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
+  };
+  try{
+    await window._fs.addDoc(window._fs.collection(window._db,"transports"),payload);
+    // scroll to bottom after render
+    setTimeout(()=>{
+      const wrap=document.getElementById("sheet-wrap");
+      wrap.scrollTop=wrap.scrollHeight;
+      // focus first input in last row
+      const rows=tbody.querySelectorAll("tr");
+      if(rows.length){const inp=rows[rows.length-1].querySelector("input");if(inp)inp.focus()}
+    },200);
+  }catch(e){toast("추가 실패: "+e.message,"err")}
+});
+
+/* ── DELETE ──────────────────────────────────────────── */
+tbody.addEventListener("click",e=>{
+  const btn=e.target.closest(".del-btn");
+  if(!btn)return;
+  pendingDeleteId=btn.dataset.id;
+  modalBg.classList.remove("hidden");
+});
+document.getElementById("m-cancel").addEventListener("click",()=>{modalBg.classList.add("hidden");pendingDeleteId=null});
+document.getElementById("m-confirm").addEventListener("click",async()=>{
+  if(!pendingDeleteId)return;
+  try{
+    await window._fs.deleteDoc(window._fs.doc(window._db,"transports",pendingDeleteId));
+    toast("삭제 완료","ok");
+  }catch(e){toast("삭제 실패: "+e.message,"err")}
+  modalBg.classList.add("hidden");pendingDeleteId=null;
+});
+
+/* ── SEARCH ──────────────────────────────────────────── */
+searchEl.addEventListener("input",render);
+
+/* ── EXPORT CSV ──────────────────────────────────────── */
+document.getElementById("btn-export").addEventListener("click",()=>{
+  const hdr=["운송날짜","Chemical","ISO Tank","Customer","Scale In(lb)","Scale Out(lb)","입고수량(lb)","입고수량(kg)","확인수량(lb)","확인수량(kg)","Check"];
+  const rows=records.map(r=>{
+    const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
+    return[r.date,r.chemical,r.isotank,r.customer,r.scaleIn??'',r.scaleOut??'',
+      qtyLb!=null?qtyLb.toFixed(1):'',qtyLb!=null?(qtyLb*LB2KG).toFixed(1):'',
+      r.confLb??'',r.confLb!=null?(r.confLb*LB2KG).toFixed(1):'',
+      calcStatus(qtyLb,r.confLb)
+    ];
+  });
+  const csv=[hdr,...rows].map(r=>r.join(",")).join("\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}));
+  a.download="chemtrack_"+new Date().toISOString().slice(0,10)+".csv";
+  a.click();
+  toast("CSV 다운로드 완료","ok");
+});
+
+/* ── FIREBASE LISTENER ───────────────────────────────── */
+window.addEventListener("fb-ready",()=>{
+  const{_db,_fs}=window;
+  const q=_fs.query(_fs.collection(_db,"transports"),_fs.orderBy("createdAt","asc"));
+  _fs.onSnapshot(q,
+    snap=>{
+      records=snap.docs.map(d=>({id:d.id,...d.data()}));
+      render();
+      connDot.className="ok";connDot.title="Firebase 연결됨";
+    },
+    err=>{
+      console.error(err);
+      connDot.className="err";connDot.title="연결 오류";
+      // demo data
+      records=[
+        {id:"d1",date:"2026-05-26",chemical:"HF",isotank:"",customer:"Qcells",scaleIn:80000,scaleOut:30000,confLb:50000,status:"ok"},
+        {id:"d2",date:"2026-05-26",chemical:"HNO3",isotank:"",customer:"PVJC",scaleIn:null,scaleOut:null,confLb:null,status:"pnd"},
+        {id:"d3",date:"2026-05-26",chemical:"HCl",isotank:"",customer:"",scaleIn:null,scaleOut:null,confLb:null,status:"pnd"},
+      ];
+      render();
+      toast("Firebase 미연결 — 데모 모드로 실행","err");
+    }
+  );
+});
+</script>
+</body>
+</html>
