@@ -109,7 +109,7 @@ table.t tfoot td{background:var(--h-lt);font-weight:700;border-top:2px solid var
 
 <script type="module">
 import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import{getFirestore,collection,addDoc,doc,deleteDoc,onSnapshot}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import{getFirestore,collection,addDoc,doc,deleteDoc,onSnapshot,setDoc}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 const cfg={
   apiKey:"AIzaSyBYoZ30Mr2LXZSNjHxFLtPQnyyI2dVajw8",
   authDomain:"chemtrack-c89f7.firebaseapp.com",
@@ -121,7 +121,7 @@ const cfg={
 };
 const app=initializeApp(cfg);
 window._db=getFirestore(app);
-window._fs={collection,addDoc,doc,deleteDoc,onSnapshot};
+window._fs={collection,addDoc,doc,deleteDoc,onSnapshot,setDoc};
 window.dispatchEvent(new Event("fb-ready"));
 </script>
 </head>
@@ -181,13 +181,16 @@ window.dispatchEvent(new Event("fb-ready"));
 
   <h2>상세 내역 <span class="sub" id="det-count"></span></h2>
   <div class="tbl-wrap"><table class="t" id="t-detail"></table></div>
-  <p class="note">Variance = 입고수량(투입) − 확인수량. <span class="pos">+ (빨강)</span> = 투입 &gt; 확인(손실), <span class="neg">− (파랑)</span> = 투입 &lt; 확인. 금액 = Variance × 운송일 기준 적용 단가. 확인수량이 없는 미확인 건은 제외됩니다.</p>
+  <p class="note">Variance (kg) = 목표값(kg) − 확인수량(kg). <span class="pos">+ (빨강)</span> = 확인이 목표보다 적음, <span class="neg">− (파랑)</span> = 확인이 목표보다 많음. 금액 = Variance(kg) × 운송일 기준 적용 단가($/kg 환산). 목표값 또는 확인수량이 없는 건은 제외됩니다.</p>
 </section>
 
 <!-- ═══════════ PRICES ═══════════ -->
 <section class="panel" id="panel-prices">
-  <h2 style="margin-top:0">현재 적용 단가 <span class="sub">(오늘 기준)</span></h2>
+  <h2>현재 적용 단가 <span class="sub">(오늘 기준)</span></h2>
   <div class="cur-prices" id="cur-prices"></div>
+
+  <h2 style="margin-top:0">기본 목표값 (kg) <span class="sub">ChemTrack에서 목표값을 비워두면 이 값이 적용됩니다. 행에 직접 입력한 값이 있으면 그 값이 우선합니다.</span></h2>
+  <div class="price-form" id="tgt-form"></div>
 
   <h2>단가 등록 <span class="sub">가격이 바뀌면 새 적용 시작일로 추가하세요. 운송일 기준으로 그 날짜 이전의 가장 최근 단가가 자동 적용됩니다.</span></h2>
   <div class="price-form">
@@ -195,7 +198,7 @@ window.dispatchEvent(new Event("fb-ready"));
     <div class="fg"><label>적용 시작일</label><input type="date" id="p-date"></div>
     <div class="fg"><label>단가 (USD)</label><input type="number" id="p-price" step="0.0001" min="0" placeholder="0.00" style="width:120px"></div>
     <div class="fg"><label>단위</label>
-      <select id="p-unit"><option value="lb">$/lb</option><option value="kg">$/kg</option><option value="mt">$/MT</option></select>
+      <select id="p-unit"><option value="kg">$/kg</option><option value="lb">$/lb</option><option value="mt">$/MT</option></select>
     </div>
     <div class="fg"><label>메모</label><input type="text" id="p-memo" placeholder="예: Q4 계약가" style="width:200px"></div>
     <button class="btn primary" id="btn-add-price">+ 단가 추가</button>
@@ -211,7 +214,7 @@ window.dispatchEvent(new Event("fb-ready"));
 
 <script>
 const LB2KG=0.45359237;
-let transports=[],prices=[];
+let transports=[],prices=[],defTargets={};
 let group="day";
 
 const $=id=>document.getElementById(id);
@@ -224,10 +227,15 @@ function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt
 function ymd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
 function toast(m,t=""){const e=document.createElement("div");e.className="toast "+t;e.textContent=m;document.body.appendChild(e);setTimeout(()=>e.remove(),2600)}
 const UNIT_LABEL={lb:"$/lb",kg:"$/kg",mt:"$/MT"};
-function perLb(p){ // 단가 → $/lb
-  if(p.unit==="kg")return p.price*LB2KG;
-  if(p.unit==="mt")return p.price*LB2KG/1000;
+function perKg(p){ // 단가 → $/kg
+  if(p.unit==="lb")return p.price/LB2KG;
+  if(p.unit==="mt")return p.price/1000;
   return p.price;
+}
+function perLb(p){return perKg(p)*LB2KG}
+function missingTarget(){ // 확인수량은 있는데 목표값이 없는 건 (기간/필터 적용)
+  const from=$("f-from").value,to=$("f-to").value,chem=$("f-chem").value,cust=$("f-cust").value;
+  return transports.filter(r=>r.date&&n(r.confLb)!=null&&n(r.targetKg)==null&&defTargets[norm(r.chemical)]==null&&(!from||r.date>=from)&&(!to||r.date<=to)&&(!chem||norm(r.chemical)===chem)&&(!cust||(r.customer||"")===cust)).length;
 }
 
 /* ── TABS ── */
@@ -253,13 +261,14 @@ function priceFor(chem,date){
 /* ── ROW BUILD ── */
 function buildRows(){
   return transports.map(r=>{
-    const si=n(r.scaleIn),so=n(r.scaleOut),conf=n(r.confLb);
-    const qty=si!=null&&so!=null?Math.max(0,si-so):null;
-    if(qty==null||conf==null||!r.date)return null;
-    const v=qty-conf;
+    const manual=n(r.targetKg)!=null;
+    const confLb=n(r.confLb),target=manual?n(r.targetKg):(defTargets[norm(r.chemical)]??null);
+    if(confLb==null||target==null||!r.date)return null;   // 목표값·확인수량 둘 다 있어야 집계
+    const conf=confLb*LB2KG;                               // 확인수량 (kg)
+    const v=target-conf;                                   // Variance (kg) = 목표 − 확인
     const p=priceFor(r.chemical,r.date);
-    const pl=p?perLb(p):null;
-    return{...r,qty,conf,varLb:v,varKg:v*LB2KG,price:p,priceLb:pl,varUsd:pl!=null?v*pl:null};
+    const pk=p?perKg(p):null;
+    return{...r,target,manual,conf,varKg:v,price:p,varUsd:pk!=null?v*pk:null};
   }).filter(Boolean);
 }
 
@@ -277,7 +286,7 @@ function periodKey(date){
 /* ── REPORT ── */
 function renderReport(){
   const from=$("f-from").value,to=$("f-to").value,chem=$("f-chem").value,cust=$("f-cust").value,onlymm=$("f-onlymm").checked;
-  let rows=buildRows().filter(r=>(!from||r.date>=from)&&(!to||r.date<=to)&&(!chem||norm(r.chemical)===chem)&&(!cust||(r.customer||"")===cust)&&(!onlymm||Math.abs(r.varLb)>=0.05));
+  let rows=buildRows().filter(r=>(!from||r.date>=from)&&(!to||r.date<=to)&&(!chem||norm(r.chemical)===chem)&&(!cust||(r.customer||"")===cust)&&(!onlymm||Math.abs(r.varKg)>=0.05));
   rows.sort((a,b)=>a.date.localeCompare(b.date)||norm(a.chemical).localeCompare(norm(b.chemical)));
 
   const glabel={day:"일별",week:"주별 (월~일)",month:"월별"}[group];
@@ -286,36 +295,38 @@ function renderReport(){
 
   // totals
   const T={n:rows.length,qty:0,conf:0,v:0,usd:0,miss:0,mm:0};
-  rows.forEach(r=>{T.qty+=r.qty;T.conf+=r.conf;T.v+=r.varLb;if(r.varUsd!=null)T.usd+=r.varUsd;else T.miss++;if(Math.abs(r.varLb)>=0.05)T.mm++});
+  rows.forEach(r=>{T.qty+=r.target;T.conf+=r.conf;T.v+=r.varKg;if(r.varUsd!=null)T.usd+=r.varUsd;else T.miss++;if(Math.abs(r.varKg)>=0.05)T.mm++});
   const rate=T.qty?T.v/T.qty*100:null;
+  const noT=missingTarget();
   $("kpis").innerHTML=`
     <div class="kpi"><div class="k">대상 건수</div><div class="v">${T.n}</div><div class="s">불일치 ${T.mm}건</div></div>
-    <div class="kpi"><div class="k">총 입고 (투입)</div><div class="v">${fmt(T.qty,0)} lb</div><div class="s">${fmt(T.qty*LB2KG,0)} kg</div></div>
-    <div class="kpi"><div class="k">총 Variance</div><div class="v ${sc(T.v)}">${fmt(T.v,1)} lb</div><div class="s">${fmt(T.v*LB2KG,1)} kg · ${rate==null?"—":fmt(rate,3)+"%"}</div></div>
+    <div class="kpi"><div class="k">목표값 합계</div><div class="v">${fmt(T.qty,0)} kg</div><div class="s">확인 ${fmt(T.conf,0)} kg</div></div>
+    <div class="kpi"><div class="k">총 Variance</div><div class="v ${sc(T.v)}">${fmt(T.v,1)} kg</div><div class="s">목표 대비 ${rate==null?"—":fmt(rate,3)+"%"}</div></div>
     <div class="kpi"><div class="k">Variance 금액</div><div class="v ${sc(T.usd)}">${usd(T.usd)}</div><div class="s">운송일 기준 단가 적용</div></div>
+    ${noT?`<div class="kpi warn"><div class="k">목표값 미입력</div><div class="v">${noT}건</div><div class="s">수기·기본 목표값 모두 없음 → 제외</div></div>`:""}
     ${T.miss?`<div class="kpi warn"><div class="k">단가 미설정</div><div class="v">${T.miss}건</div><div class="s">금액 합계에서 제외됨</div></div>`:""}`;
 
   // by period
   const P=new Map();
-  rows.forEach(r=>{const k=periodKey(r.date);const o=P.get(k)||{n:0,qty:0,conf:0,v:0,usd:0,miss:0};o.n++;o.qty+=r.qty;o.conf+=r.conf;o.v+=r.varLb;if(r.varUsd!=null)o.usd+=r.varUsd;else o.miss++;P.set(k,o)});
+  rows.forEach(r=>{const k=periodKey(r.date);const o=P.get(k)||{n:0,qty:0,conf:0,v:0,usd:0,miss:0};o.n++;o.qty+=r.target;o.conf+=r.conf;o.v+=r.varKg;if(r.varUsd!=null)o.usd+=r.varUsd;else o.miss++;P.set(k,o)});
   const pk=[...P.keys()].sort();
-  const hd=`<thead><tr><th>기간</th><th>건수</th><th>입고 (lb)</th><th>확인 (lb)</th><th>Variance (lb)</th><th>Variance (kg)</th><th>Variance %</th><th>Variance ($)</th></tr></thead>`;
-  if(!pk.length){$("t-period").innerHTML=hd+`<tbody><tr><td colspan="8" class="empty">조건에 맞는 데이터가 없습니다</td></tr></tbody>`}
-  else $("t-period").innerHTML=hd+"<tbody>"+pk.map(k=>{const o=P.get(k);return`<tr><td class="c">${k}</td><td class="num">${o.n}</td><td class="num">${fmt(o.qty)}</td><td class="num">${fmt(o.conf)}</td><td class="num ${sc(o.v)}">${fmt(o.v)}</td><td class="num ${sc(o.v)}">${fmt(o.v*LB2KG)}</td><td class="num">${o.qty?fmt(o.v/o.qty*100,3)+"%":""}</td><td class="num ${sc(o.usd)}">${usd(o.usd)}${o.miss?` <span class="miss" title="단가 미설정 ${o.miss}건">*</span>`:""}</td></tr>`}).join("")+"</tbody>"
-    +`<tfoot><tr><td class="c">합계</td><td class="num">${T.n}</td><td class="num">${fmt(T.qty)}</td><td class="num">${fmt(T.conf)}</td><td class="num">${fmt(T.v)}</td><td class="num">${fmt(T.v*LB2KG)}</td><td class="num">${rate==null?"":fmt(rate,3)+"%"}</td><td class="num">${usd(T.usd)}</td></tr></tfoot>`;
+  const hd=`<thead><tr><th>기간</th><th>건수</th><th>목표값 (kg)</th><th>확인 (kg)</th><th>Variance (kg)</th><th>Variance %</th><th>Variance ($)</th></tr></thead>`;
+  if(!pk.length){$("t-period").innerHTML=hd+`<tbody><tr><td colspan="7" class="empty">조건에 맞는 데이터가 없습니다 (목표값이 입력된 건만 집계)</td></tr></tbody>`}
+  else $("t-period").innerHTML=hd+"<tbody>"+pk.map(k=>{const o=P.get(k);return`<tr><td class="c">${k}</td><td class="num">${o.n}</td><td class="num">${fmt(o.qty)}</td><td class="num">${fmt(o.conf)}</td><td class="num ${sc(o.v)}">${fmt(o.v)}</td><td class="num">${o.qty?fmt(o.v/o.qty*100,3)+"%":""}</td><td class="num ${sc(o.usd)}">${usd(o.usd)}${o.miss?` <span class="miss" title="단가 미설정 ${o.miss}건">*</span>`:""}</td></tr>`}).join("")+"</tbody>"
+    +`<tfoot><tr><td class="c">합계</td><td class="num">${T.n}</td><td class="num">${fmt(T.qty)}</td><td class="num">${fmt(T.conf)}</td><td class="num">${fmt(T.v)}</td><td class="num">${rate==null?"":fmt(rate,3)+"%"}</td><td class="num">${usd(T.usd)}</td></tr></tfoot>`;
   drawChart(pk.map(k=>({k,v:P.get(k).usd})));
 
   // by chemical
   const C=new Map();
-  rows.forEach(r=>{const k=norm(r.chemical)||"(미입력)";const o=C.get(k)||{n:0,qty:0,v:0,usd:0,miss:0};o.n++;o.qty+=r.qty;o.v+=r.varLb;if(r.varUsd!=null)o.usd+=r.varUsd;else o.miss++;C.set(k,o)});
+  rows.forEach(r=>{const k=norm(r.chemical)||"(미입력)";const o=C.get(k)||{n:0,qty:0,conf:0,v:0,usd:0,miss:0};o.n++;o.qty+=r.target;o.conf+=r.conf;o.v+=r.varKg;if(r.varUsd!=null)o.usd+=r.varUsd;else o.miss++;C.set(k,o)});
   const ck=[...C.keys()].sort();
-  $("t-chem").innerHTML=`<thead><tr><th>Chemical</th><th>건수</th><th>입고 (lb)</th><th>Variance (lb)</th><th>Variance (kg)</th><th>Variance %</th><th>현재 단가</th><th>Variance ($)</th></tr></thead><tbody>`+
-    (ck.length?ck.map(k=>{const o=C.get(k);const cp=priceFor(k,ymd(new Date()));return`<tr><td class="c"><b>${esc(k)}</b></td><td class="num">${o.n}</td><td class="num">${fmt(o.qty)}</td><td class="num ${sc(o.v)}">${fmt(o.v)}</td><td class="num ${sc(o.v)}">${fmt(o.v*LB2KG)}</td><td class="num">${o.qty?fmt(o.v/o.qty*100,3)+"%":""}</td><td class="num">${cp?"$"+cp.price+" "+UNIT_LABEL[cp.unit].slice(1):'<span class="miss">미설정</span>'}</td><td class="num ${sc(o.usd)}">${usd(o.usd)}${o.miss?` <span class="miss">(${o.miss}건 단가없음)</span>`:""}</td></tr>`}).join(""):`<tr><td colspan="8" class="empty">—</td></tr>`)+"</tbody>";
+  $("t-chem").innerHTML=`<thead><tr><th>Chemical</th><th>건수</th><th>목표값 (kg)</th><th>확인 (kg)</th><th>Variance (kg)</th><th>Variance %</th><th>현재 단가</th><th>Variance ($)</th></tr></thead><tbody>`+
+    (ck.length?ck.map(k=>{const o=C.get(k);const cp=priceFor(k,ymd(new Date()));return`<tr><td class="c"><b>${esc(k)}</b></td><td class="num">${o.n}</td><td class="num">${fmt(o.qty)}</td><td class="num">${fmt(o.conf)}</td><td class="num ${sc(o.v)}">${fmt(o.v)}</td><td class="num">${o.qty?fmt(o.v/o.qty*100,3)+"%":""}</td><td class="num">${cp?"$"+cp.price+" "+UNIT_LABEL[cp.unit].slice(1):'<span class="miss">미설정</span>'}</td><td class="num ${sc(o.usd)}">${usd(o.usd)}${o.miss?` <span class="miss">(${o.miss}건 단가없음)</span>`:""}</td></tr>`}).join(""):`<tr><td colspan="8" class="empty">—</td></tr>`)+"</tbody>";
 
   // detail
   $("det-count").textContent=rows.length+"건";
-  $("t-detail").innerHTML=`<thead><tr><th>#</th><th>운송 날짜</th><th>Chemical</th><th>Customer</th><th>ISO Tank</th><th>입고 (lb)</th><th>확인 (lb)</th><th>Variance (lb)</th><th>Variance (kg)</th><th>적용 단가</th><th>Variance ($)</th></tr></thead><tbody>`+
-    (rows.length?rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="c">${r.date}</td><td class="c">${esc(r.chemical)}</td><td>${esc(r.customer)}</td><td>${esc(r.isotank)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt(r.conf)}</td><td class="num ${sc(r.varLb)}">${fmt(r.varLb)}</td><td class="num ${sc(r.varLb)}">${fmt(r.varKg)}</td><td class="num">${r.price?`$${r.price.price} ${UNIT_LABEL[r.price.unit].slice(1)} <span style="color:var(--txt2);font-size:11px">(${r.price.effectiveDate}~)</span>`:'<span class="miss">미설정</span>'}</td><td class="num ${sc(r.varUsd)}">${usd(r.varUsd)}</td></tr>`).join(""):`<tr><td colspan="11" class="empty">—</td></tr>`)+"</tbody>";
+  $("t-detail").innerHTML=`<thead><tr><th>#</th><th>운송 날짜</th><th>Chemical</th><th>Customer</th><th>ISO Tank</th><th>목표값 (kg)</th><th>확인 (kg)</th><th>Variance (kg)</th><th>적용 단가</th><th>Variance ($)</th></tr></thead><tbody>`+
+    (rows.length?rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="c">${r.date}</td><td class="c">${esc(r.chemical)}</td><td>${esc(r.customer)}</td><td>${esc(r.isotank)}</td><td class="num">${fmt(r.target)} <span style="font-size:10.5px;color:${r.manual?"#9a3412":"var(--txt2)"}">${r.manual?"수기":"기본"}</span></td><td class="num">${fmt(r.conf)}</td><td class="num ${sc(r.varKg)}">${fmt(r.varKg)}</td><td class="num">${r.price?`$${r.price.price} ${UNIT_LABEL[r.price.unit].slice(1)} <span style="color:var(--txt2);font-size:11px">(${r.price.effectiveDate}~)</span>`:'<span class="miss">미설정</span>'}</td><td class="num ${sc(r.varUsd)}">${usd(r.varUsd)}</td></tr>`).join(""):`<tr><td colspan="10" class="empty">—</td></tr>`)+"</tbody>";
 
   window._lastRows=rows;
 }
@@ -359,8 +370,8 @@ window.addEventListener("resize",()=>{clearTimeout(window._rt);window._rt=setTim
 $("btn-csv").onclick=()=>{
   const rows=window._lastRows||[];
   const q=v=>`"${String(v??"").replace(/"/g,'""')}"`;
-  const hdr=["운송날짜","기간","Chemical","Customer","ISO Tank","입고(lb)","확인(lb)","Variance(lb)","Variance(kg)","단가","단위","단가적용일","Variance($)"];
-  const body=rows.map(r=>[r.date,periodKey(r.date),r.chemical,r.customer,r.isotank,r.qty.toFixed(1),r.conf.toFixed(1),r.varLb.toFixed(1),r.varKg.toFixed(1),r.price?r.price.price:"",r.price?UNIT_LABEL[r.price.unit]:"",r.price?r.price.effectiveDate:"",r.varUsd!=null?r.varUsd.toFixed(2):""].map(q).join(","));
+  const hdr=["운송날짜","기간","Chemical","Customer","ISO Tank","목표값(kg)","목표값구분","확인(kg)","Variance(kg)","단가","단위","단가적용일","Variance($)"];
+  const body=rows.map(r=>[r.date,periodKey(r.date),r.chemical,r.customer,r.isotank,r.target.toFixed(1),r.manual?"수기":"기본",r.conf.toFixed(1),r.varKg.toFixed(1),r.price?r.price.price:"",r.price?UNIT_LABEL[r.price.unit]:"",r.price?r.price.effectiveDate:"",r.varUsd!=null?r.varUsd.toFixed(2):""].map(q).join(","));
   const a=document.createElement("a");
   a.href=URL.createObjectURL(new Blob(["﻿"+[hdr.map(q).join(","),...body].join("\n")],{type:"text/csv;charset=utf-8"}));
   a.download=`chemtrack_variance_${$("f-from").value||"all"}_${$("f-to").value||"now"}.csv`;a.click();
@@ -417,7 +428,27 @@ $("t-prices").addEventListener("click",async e=>{
 
 /* ── INIT ── */
 (function(){const d=new Date();$("f-from").value=ymd(new Date(d.getFullYear(),d.getMonth(),1));$("f-to").value=ymd(new Date(d.getFullYear(),d.getMonth()+1,0))})();
-function renderAll(){refreshSelects();renderReport();renderPrices()}
+function renderTargets(){
+  const box=$("tgt-form");
+  // 입력 중이면 다시 그리지 않음
+  if(box.contains(document.activeElement))return;
+  const chems=[...new Set([...chemOptions(),...Object.keys(defTargets)])].sort();
+  box.innerHTML=chems.map(c=>`<div class="fg"><label>${esc(c)}</label><input type="number" step="0.1" min="0" data-tgt="${esc(c)}" value="${defTargets[c]??""}" placeholder="미설정" style="width:120px"></div>`).join("")
+    +`<div class="fg"><label>Chemical 추가</label><input type="text" id="tgt-new" placeholder="예: KOH" style="width:100px"></div>`
+    +`<button class="btn primary" id="btn-save-tgt">기본 목표값 저장</button>`;
+  $("btn-save-tgt").onclick=saveTargets;
+}
+async function saveTargets(){
+  const values={};
+  $("tgt-form").querySelectorAll("[data-tgt]").forEach(i=>{const v=n(i.value);if(v!=null)values[i.dataset.tgt]=v});
+  const nc=norm($("tgt-new").value);
+  if(nc&&values[nc]==null){defTargets[nc]=null;document.activeElement.blur();renderTargets();toast(`${nc} 추가됨 — 값을 입력 후 저장하세요`);return}
+  try{
+    await window._fs.setDoc(window._fs.doc(window._db,"prices","config_targets"),{type:"targets",values,updatedAt:new Date().toISOString()});
+    document.activeElement.blur();defTargets=values;renderTargets();renderReport();toast("기본 목표값 저장 완료","ok");
+  }catch(e){toast("저장 실패: "+e.message,"err")}
+}
+function renderAll(){refreshSelects();renderReport();renderPrices();renderTargets()}
 
 window.addEventListener("fb-ready",()=>{
   const{_db,_fs}=window;
@@ -425,7 +456,10 @@ window.addEventListener("fb-ready",()=>{
     s=>{transports=s.docs.map(d=>({id:d.id,...d.data()}));$("conn-dot").className="ok";$("conn-dot").title="Firebase 연결됨";renderAll()},
     e=>{console.error(e);$("conn-dot").className="err";toast("transports 읽기 실패: "+e.message,"err")});
   _fs.onSnapshot(_fs.collection(_db,"prices"),
-    s=>{prices=s.docs.map(d=>({id:d.id,...d.data()}));renderAll()},
+    s=>{
+      prices=[];defTargets={};
+      s.docs.forEach(d=>{const x=d.data();if(d.id==="config_targets")defTargets=x.values||{};else prices.push({id:d.id,...x})});
+      renderAll()},
     e=>{console.error(e);$("conn-dot").className="err";toast("prices 읽기 실패 — Firestore 규칙 확인: "+e.message,"err")});
 });
 renderAll();

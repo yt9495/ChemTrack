@@ -138,6 +138,8 @@ td.cell-auto{
   font-size:12px;
 }
 td.cell-auto.active-row{color:var(--txt)}
+td.cell-num input.tgt-manual{color:#9a3412;font-weight:700}
+td.cell-num input.tgt-default::placeholder{color:#6b7280;opacity:1}
 td.cell-auto.var-pos{color:#b91c1c;font-weight:600}
 td.cell-auto.var-neg{color:#1d4ed8;font-weight:600}
 
@@ -277,7 +279,8 @@ window.dispatchEvent(new Event("fb-ready"));
   <th class="w-auto">입고수량 (kg)</th>
   <th class="w-num">확인수량 (lb)</th>
   <th class="w-auto">확인수량 (kg)</th>
-  <th class="w-auto" title="입고수량 − 확인수량">Variance (lb)</th>
+  <th class="w-num" title="직접 입력하는 목표값 (kg)">목표값 (kg)</th>
+  <th class="w-auto" title="목표값(kg) − 확인수량(kg)">Variance (kg)</th>
   <th class="w-chk">Check</th>
   <th class="w-act">삭제</th>
 </tr>
@@ -330,13 +333,20 @@ function badgeHtml(s){
   if(s==="mm") return`<span class="badge mm">⚠️ 불일치</span>`;
   return`<span class="badge pnd">— 미확인</span>`;
 }
-function calcVar(qtyLb,confLb){
-  if(qtyLb==null||confLb==null||confLb==="")return null;
-  return Number(qtyLb)-Number(confLb);
+// Variance (kg) = 목표값(kg) − 확인수량(kg)
+function calcVar(targetKg,confLb){
+  if(targetKg==null||targetKg===""||confLb==null||confLb==="")return null;
+  return Number(targetKg)-Number(confLb)*LB2KG;
 }
 function varClass(v){return v==null||Math.abs(v)<0.05?"":(v>0?"var-pos":"var-neg")}
-function varCell(qtyLb,confLb){
-  const v=calcVar(qtyLb,confLb);
+// 목표값: 수기 입력값이 있으면 그 값, 없으면 Chemical별 기본 목표값
+let defTargets={};
+const normC=s=>(s||"").trim().toUpperCase();
+function hasManual(r){return r.targetKg!=null&&r.targetKg!==""}
+function effTarget(r){return hasManual(r)?Number(r.targetKg):(defTargets[normC(r.chemical)]??null)}
+function tgtPlaceholder(r){const d=defTargets[normC(r.chemical)];return d!=null?fmt(d):"목표 kg"}
+function varCell(targetKg,confLb){
+  const v=calcVar(targetKg,confLb);
   return`<td class="cell-auto w-auto ${varClass(v)}">${fmt(v)}</td>`;
 }
 function toast(msg,type=""){
@@ -389,7 +399,8 @@ function render(){
       <td class="cell-auto w-auto">${fmt(qtyKg)}</td>
       <td class="cell-num w-num"><input type="number" value="${r.confLb??""}" placeholder="0" data-field="confLb" data-id="${r.id}" step="0.1" min="0"></td>
       <td class="cell-auto w-auto">${fmt(confKg)}</td>
-      ${varCell(qtyLb,r.confLb)}
+      <td class="cell-num w-num"><input type="number" class="${hasManual(r)?"tgt-manual":"tgt-default"}" value="${r.targetKg??""}" placeholder="${tgtPlaceholder(r)}" title="비워두면 기본 목표값 사용" data-field="targetKg" data-id="${r.id}" step="0.1" min="0"></td>
+      ${varCell(effTarget(r),r.confLb)}
       <td class="cell-check w-chk">${badgeHtml(status)}</td>
       <td class="cell-act w-act"><button class="del-btn" data-id="${r.id}" title="삭제">🗑</button></td>
     </tr>`;
@@ -425,7 +436,7 @@ tbody.addEventListener("input",e=>{
   // update local record
   const r=records.find(x=>x.id===id);
   if(!r)return;
-  r[field]=val===""?null:(["scaleIn","scaleOut","confLb"].includes(field)?Number(val):val);
+  r[field]=val===""?null:(["scaleIn","scaleOut","confLb","targetKg"].includes(field)?Number(val):val);
 
   // re-render computed cells in same row
   const tr=inp.closest("tr");
@@ -437,7 +448,10 @@ tbody.addEventListener("input",e=>{
   cells[0].textContent=fmt(qtyLb);
   cells[1].textContent=fmt(qtyKg);
   cells[2].textContent=fmt(confKg);
-  const v=calcVar(qtyLb,r.confLb);
+  const tIn=tr.querySelector('input[data-field="targetKg"]');
+  tIn.placeholder=tgtPlaceholder(r);
+  tIn.className=hasManual(r)?"tgt-manual":"tgt-default";
+  const v=calcVar(effTarget(r),r.confLb);
   cells[3].textContent=fmt(v);
   cells[3].className="cell-auto w-auto "+varClass(v);
   tr.querySelector("td.cell-check").innerHTML=badgeHtml(status);
@@ -464,7 +478,8 @@ async function saveRecord(id){
       qtyKg:qtyLb!=null?qtyLb*LB2KG:null,
       confLb:r.confLb??null,
       confKg:r.confLb!=null?r.confLb*LB2KG:null,
-      varLb:calcVar(qtyLb,r.confLb),
+      targetKg:r.targetKg??null,
+      varKg:calcVar(effTarget(r),r.confLb),
       status:calcStatus(qtyLb,r.confLb),
       updatedAt:new Date().toISOString()
     });
@@ -481,7 +496,7 @@ document.getElementById("btn-add").addEventListener("click",async()=>{
     date:ymd(new Date()),
     chemical:"",isotank:"",customer:"",
     scaleIn:null,scaleOut:null,qtyLb:null,qtyKg:null,
-    confLb:null,confKg:null,status:"pnd",
+    confLb:null,confKg:null,targetKg:null,varKg:null,status:"pnd",
     createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()
   };
   try{
@@ -535,13 +550,14 @@ try{const sv=localStorage.getItem("ct_range");if(sv&&sv!=="custom"){drQuick.valu
 
 /* ── EXPORT CSV ──────────────────────────────────────── */
 document.getElementById("btn-export").addEventListener("click",()=>{
-  const hdr=["운송날짜","Chemical","ISO Tank","Customer","Scale In(lb)","Scale Out(lb)","입고수량(lb)","입고수량(kg)","확인수량(lb)","확인수량(kg)","Variance(lb)","Check"];
+  const hdr=["운송날짜","Chemical","ISO Tank","Customer","Scale In(lb)","Scale Out(lb)","입고수량(lb)","입고수량(kg)","확인수량(lb)","확인수량(kg)","목표값(kg)","목표값구분","Variance(kg)","Check"];
   const rows=filtered().map(r=>{
     const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
     return[r.date,r.chemical,r.isotank,r.customer,r.scaleIn??'',r.scaleOut??'',
       qtyLb!=null?qtyLb.toFixed(1):'',qtyLb!=null?(qtyLb*LB2KG).toFixed(1):'',
       r.confLb??'',r.confLb!=null?(r.confLb*LB2KG).toFixed(1):'',
-      (v=>v==null?'':v.toFixed(1))(calcVar(qtyLb,r.confLb)),
+      effTarget(r)??'',hasManual(r)?'수기':(effTarget(r)!=null?'기본':''),
+      (v=>v==null?'':v.toFixed(1))(calcVar(effTarget(r),r.confLb)),
       calcStatus(qtyLb,r.confLb)
     ];
   });
@@ -560,6 +576,10 @@ document.getElementById("btn-price").addEventListener("click",()=>window.open("v
 /* ── FIREBASE LISTENER ───────────────────────────────── */
 window.addEventListener("fb-ready",()=>{
   const{_db,_fs}=window;
+  // 기본 목표값 (variance.html 설정 탭에서 관리)
+  _fs.onSnapshot(_fs.doc(_db,"prices","config_targets"),
+    d=>{defTargets=(d.exists()&&d.data().values)||{};render()},
+    e=>console.error("기본 목표값 읽기 실패",e));
   const q=_fs.query(_fs.collection(_db,"transports"),_fs.orderBy("createdAt","asc"));
   _fs.onSnapshot(q,
     snap=>{
