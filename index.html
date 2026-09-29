@@ -54,6 +54,10 @@ html,body{height:100%;overflow:hidden;background:#fff;color:var(--txt);font-fami
 #conn-dot.ok{background:#d1fae5;border-color:#059669}
 #conn-dot.err{background:#fee2e2;border-color:#dc2626}
 #record-label{font-size:12px;color:var(--txt2);white-space:nowrap}
+.dr{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--txt2)}
+.dr input[type=date]{height:30px;border:1.5px solid var(--bd);border-radius:5px;padding:0 6px;font-size:12px;font-family:inherit;outline:none}
+.dr input[type=date]:focus{border-color:var(--h)}
+.dr select{height:30px;border:1.5px solid var(--bd);border-radius:5px;padding:0 6px;font-size:12px;font-family:inherit;background:#fff;outline:none;cursor:pointer}
 
 /* ─ LAYOUT ─ */
 #app{display:flex;flex-direction:column;height:100vh}
@@ -134,6 +138,8 @@ td.cell-auto{
   font-size:12px;
 }
 td.cell-auto.active-row{color:var(--txt)}
+td.cell-auto.var-pos{color:#b91c1c;font-weight:600}
+td.cell-auto.var-neg{color:#1d4ed8;font-weight:600}
 
 /* check badge cell */
 td.cell-check{text-align:center;padding:0 6px}
@@ -236,6 +242,20 @@ window.dispatchEvent(new Event("fb-ready"));
   <span class="logo">⚗ ChemTrack</span>
   <button class="tb-btn primary" id="btn-add">+ 행 추가</button>
   <button class="tb-btn ghost" id="btn-export">CSV 내보내기</button>
+  <button class="tb-btn ghost" id="btn-variance" title="Variance 리포트 (새 창)">📊 Variance 리포트</button>
+  <button class="tb-btn ghost" id="btn-price" title="Chemical 단가 설정 (새 창)">⚙ 단가 설정</button>
+  <div class="dr">
+    <select id="dr-quick" title="기간 빠른 선택">
+      <option value="all">전체 기간</option>
+      <option value="tm">이번 달</option>
+      <option value="lm">지난 달</option>
+      <option value="3m">최근 3개월</option>
+      <option value="tq">이번 분기</option>
+      <option value="ty">올해</option>
+      <option value="custom">직접 지정</option>
+    </select>
+    <input type="date" id="dr-from" title="시작일"> ~ <input type="date" id="dr-to" title="종료일">
+  </div>
   <input type="search" id="search-box" placeholder="검색 (Chemical / Customer / ISO Tank)">
   <span id="record-label">0 건</span>
   <div id="conn-dot" title="연결 확인 중"></div>
@@ -257,6 +277,7 @@ window.dispatchEvent(new Event("fb-ready"));
   <th class="w-auto">입고수량 (kg)</th>
   <th class="w-num">확인수량 (lb)</th>
   <th class="w-auto">확인수량 (kg)</th>
+  <th class="w-auto" title="입고수량 − 확인수량">Variance (lb)</th>
   <th class="w-chk">Check</th>
   <th class="w-act">삭제</th>
 </tr>
@@ -309,6 +330,15 @@ function badgeHtml(s){
   if(s==="mm") return`<span class="badge mm">⚠️ 불일치</span>`;
   return`<span class="badge pnd">— 미확인</span>`;
 }
+function calcVar(qtyLb,confLb){
+  if(qtyLb==null||confLb==null||confLb==="")return null;
+  return Number(qtyLb)-Number(confLb);
+}
+function varClass(v){return v==null||Math.abs(v)<0.05?"":(v>0?"var-pos":"var-neg")}
+function varCell(qtyLb,confLb){
+  const v=calcVar(qtyLb,confLb);
+  return`<td class="cell-auto w-auto ${varClass(v)}">${fmt(v)}</td>`;
+}
 function toast(msg,type=""){
   const t=document.createElement("div");
   t.className="toast"+(type?" "+type:"");
@@ -318,10 +348,24 @@ function toast(msg,type=""){
 }
 
 /* ── RENDER ─────────────────────────────────────────── */
+const drFrom=document.getElementById("dr-from");
+const drTo=document.getElementById("dr-to");
+const drQuick=document.getElementById("dr-quick");
+
+// 최신 날짜가 맨 위 (같은 날짜면 나중에 추가한 행이 위)
+function sortDesc(a,b){
+  const da=a.date||"9999-99-99",db=b.date||"9999-99-99"; // 날짜 비어있는 새 행은 맨 위
+  if(da!==db)return da<db?1:-1;
+  return (b.createdAt||"").localeCompare(a.createdAt||"");
+}
 function filtered(){
   const q=searchEl.value.toLowerCase();
-  if(!q)return records;
-  return records.filter(r=>[r.chemical,r.customer,r.isotank].join(" ").toLowerCase().includes(q));
+  const f=drFrom.value,t=drTo.value;
+  return records.filter(r=>{
+    if(q&&![r.chemical,r.customer,r.isotank].join(" ").toLowerCase().includes(q))return false;
+    if(r.date){ if(f&&r.date<f)return false; if(t&&r.date>t)return false; }
+    return true;
+  }).sort(sortDesc);
 }
 
 function render(){
@@ -345,6 +389,7 @@ function render(){
       <td class="cell-auto w-auto">${fmt(qtyKg)}</td>
       <td class="cell-num w-num"><input type="number" value="${r.confLb??""}" placeholder="0" data-field="confLb" data-id="${r.id}" step="0.1" min="0"></td>
       <td class="cell-auto w-auto">${fmt(confKg)}</td>
+      ${varCell(qtyLb,r.confLb)}
       <td class="cell-check w-chk">${badgeHtml(status)}</td>
       <td class="cell-act w-act"><button class="del-btn" data-id="${r.id}" title="삭제">🗑</button></td>
     </tr>`;
@@ -392,6 +437,9 @@ tbody.addEventListener("input",e=>{
   cells[0].textContent=fmt(qtyLb);
   cells[1].textContent=fmt(qtyKg);
   cells[2].textContent=fmt(confKg);
+  const v=calcVar(qtyLb,r.confLb);
+  cells[3].textContent=fmt(v);
+  cells[3].className="cell-auto w-auto "+varClass(v);
   tr.querySelector("td.cell-check").innerHTML=badgeHtml(status);
   updateFooter(filtered());
 
@@ -416,6 +464,7 @@ async function saveRecord(id){
       qtyKg:qtyLb!=null?qtyLb*LB2KG:null,
       confLb:r.confLb??null,
       confKg:r.confLb!=null?r.confLb*LB2KG:null,
+      varLb:calcVar(qtyLb,r.confLb),
       status:calcStatus(qtyLb,r.confLb),
       updatedAt:new Date().toISOString()
     });
@@ -425,8 +474,11 @@ async function saveRecord(id){
 /* ── ADD ROW ─────────────────────────────────────────── */
 document.getElementById("btn-add").addEventListener("click",async()=>{
   if(!window._db){toast("Firebase 연결 필요","err");return}
+  // 오늘이 선택 기간 밖이면 기간 필터 해제 (새 행이 안 보이는 문제 방지)
+  const today=ymd(new Date());
+  if((drFrom.value&&today<drFrom.value)||(drTo.value&&today>drTo.value)){drQuick.value="all";drFrom.value="";drTo.value="";}
   const payload={
-    date:new Date().toISOString().slice(0,10),
+    date:ymd(new Date()),
     chemical:"",isotank:"",customer:"",
     scaleIn:null,scaleOut:null,qtyLb:null,qtyKg:null,
     confLb:null,confKg:null,status:"pnd",
@@ -437,10 +489,10 @@ document.getElementById("btn-add").addEventListener("click",async()=>{
     // scroll to bottom after render
     setTimeout(()=>{
       const wrap=document.getElementById("sheet-wrap");
-      wrap.scrollTop=wrap.scrollHeight;
-      // focus first input in last row
-      const rows=tbody.querySelectorAll("tr");
-      if(rows.length){const inp=rows[rows.length-1].querySelector("input");if(inp)inp.focus()}
+      wrap.scrollTop=0;
+      // 새 행(오늘 날짜)은 맨 위 → Chemical 칸에 포커스
+      const tr=tbody.querySelector("tr");
+      if(tr){const inp=tr.querySelector('input[data-field="chemical"]')||tr.querySelector("input");if(inp)inp.focus()}
     },200);
   }catch(e){toast("추가 실패: "+e.message,"err")}
 });
@@ -465,14 +517,31 @@ document.getElementById("m-confirm").addEventListener("click",async()=>{
 /* ── SEARCH ──────────────────────────────────────────── */
 searchEl.addEventListener("input",render);
 
+/* ── 기간 필터 ───────────────────────────────────────── */
+function ymd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
+function applyQuick(v){
+  const d=new Date(),y=d.getFullYear(),m=d.getMonth();let f="",t="";
+  if(v==="tm"){f=ymd(new Date(y,m,1));t=ymd(new Date(y,m+1,0))}
+  if(v==="lm"){f=ymd(new Date(y,m-1,1));t=ymd(new Date(y,m,0))}
+  if(v==="3m"){f=ymd(new Date(y,m-2,1));t=ymd(new Date(y,m+1,0))}
+  if(v==="tq"){const q=Math.floor(m/3)*3;f=ymd(new Date(y,q,1));t=ymd(new Date(y,q+3,0))}
+  if(v==="ty"){f=y+"-01-01";t=y+"-12-31"}
+  if(v==="custom")return;
+  drFrom.value=f;drTo.value=t;
+}
+drQuick.addEventListener("change",()=>{applyQuick(drQuick.value);render();try{localStorage.setItem("ct_range",drQuick.value)}catch(e){}});
+[drFrom,drTo].forEach(el=>el.addEventListener("change",()=>{drQuick.value=(drFrom.value||drTo.value)?"custom":"all";render()}));
+try{const sv=localStorage.getItem("ct_range");if(sv&&sv!=="custom"){drQuick.value=sv;applyQuick(sv)}}catch(e){}
+
 /* ── EXPORT CSV ──────────────────────────────────────── */
 document.getElementById("btn-export").addEventListener("click",()=>{
-  const hdr=["운송날짜","Chemical","ISO Tank","Customer","Scale In(lb)","Scale Out(lb)","입고수량(lb)","입고수량(kg)","확인수량(lb)","확인수량(kg)","Check"];
-  const rows=records.map(r=>{
+  const hdr=["운송날짜","Chemical","ISO Tank","Customer","Scale In(lb)","Scale Out(lb)","입고수량(lb)","입고수량(kg)","확인수량(lb)","확인수량(kg)","Variance(lb)","Check"];
+  const rows=filtered().map(r=>{
     const qtyLb=r.scaleIn!=null&&r.scaleOut!=null?Math.max(0,r.scaleIn-r.scaleOut):null;
     return[r.date,r.chemical,r.isotank,r.customer,r.scaleIn??'',r.scaleOut??'',
       qtyLb!=null?qtyLb.toFixed(1):'',qtyLb!=null?(qtyLb*LB2KG).toFixed(1):'',
       r.confLb??'',r.confLb!=null?(r.confLb*LB2KG).toFixed(1):'',
+      (v=>v==null?'':v.toFixed(1))(calcVar(qtyLb,r.confLb)),
       calcStatus(qtyLb,r.confLb)
     ];
   });
@@ -483,6 +552,10 @@ document.getElementById("btn-export").addEventListener("click",()=>{
   a.click();
   toast("CSV 다운로드 완료","ok");
 });
+
+/* ── VARIANCE 리포트 / 단가 설정 (새 창) ─────────────── */
+document.getElementById("btn-variance").addEventListener("click",()=>window.open("variance.html","chemtrack_variance"));
+document.getElementById("btn-price").addEventListener("click",()=>window.open("variance.html#prices","chemtrack_variance"));
 
 /* ── FIREBASE LISTENER ───────────────────────────────── */
 window.addEventListener("fb-ready",()=>{
