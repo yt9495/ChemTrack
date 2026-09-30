@@ -280,7 +280,7 @@ window.dispatchEvent(new Event("fb-ready"));
   <th class="w-num">확인수량 (lb)</th>
   <th class="w-auto">확인수량 (kg)</th>
   <th class="w-num" title="직접 입력하는 목표값 (kg)">목표값 (kg)</th>
-  <th class="w-auto" title="목표값(kg) − 확인수량(kg)">Variance (kg)</th>
+  <th class="w-auto" title="확인수량(kg) − 목표값(kg)">Variance (kg)</th>
   <th class="w-chk">Check</th>
   <th class="w-act">삭제</th>
 </tr>
@@ -333,10 +333,10 @@ function badgeHtml(s){
   if(s==="mm") return`<span class="badge mm">⚠️ 불일치</span>`;
   return`<span class="badge pnd">— 미확인</span>`;
 }
-// Variance (kg) = 목표값(kg) − 확인수량(kg)
+// Variance (kg) = 확인수량(kg) − 목표값(kg)
 function calcVar(targetKg,confLb){
   if(targetKg==null||targetKg===""||confLb==null||confLb==="")return null;
-  return Number(targetKg)-Number(confLb)*LB2KG;
+  return Number(confLb)*LB2KG-Number(targetKg);
 }
 function varClass(v){return v==null||Math.abs(v)<0.05?"":(v>0?"var-pos":"var-neg")}
 // 목표값: 수기 입력값이 있으면 그 값, 없으면 Chemical별 기본 목표값

@@ -181,7 +181,7 @@ window.dispatchEvent(new Event("fb-ready"));
 
   <h2>상세 내역 <span class="sub" id="det-count"></span></h2>
   <div class="tbl-wrap"><table class="t" id="t-detail"></table></div>
-  <p class="note">Variance (kg) = 목표값(kg) − 확인수량(kg). <span class="pos">+ (빨강)</span> = 확인이 목표보다 적음, <span class="neg">− (파랑)</span> = 확인이 목표보다 많음. 금액 = Variance(kg) × 운송일 기준 적용 단가($/kg 환산). 목표값 또는 확인수량이 없는 건은 제외됩니다.</p>
+  <p class="note">Variance (kg) = 확인수량(kg) − 목표값(kg). <span class="pos">+ (빨강)</span> = 확인이 목표보다 많음, <span class="neg">− (파랑)</span> = 확인이 목표보다 적음. 금액 = Variance(kg) × 운송일 기준 적용 단가($/kg 환산). 목표값 또는 확인수량이 없는 건은 제외됩니다.</p>
 </section>
 
 <!-- ═══════════ PRICES ═══════════ -->
@@ -265,7 +265,7 @@ function buildRows(){
     const confLb=n(r.confLb),target=manual?n(r.targetKg):(defTargets[norm(r.chemical)]??null);
     if(confLb==null||target==null||!r.date)return null;   // 목표값·확인수량 둘 다 있어야 집계
     const conf=confLb*LB2KG;                               // 확인수량 (kg)
-    const v=target-conf;                                   // Variance (kg) = 목표 − 확인
+    const v=conf-target;                                   // Variance (kg) = 확인 − 목표
     const p=priceFor(r.chemical,r.date);
     const pk=p?perKg(p):null;
     return{...r,target,manual,conf,varKg:v,price:p,varUsd:pk!=null?v*pk:null};
